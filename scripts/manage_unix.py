@@ -6,7 +6,6 @@ from __future__ import annotations
 import json
 import os
 import shlex
-import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -21,7 +20,7 @@ CLI_DIR = GEMINI / "antigravity-cli"
 AGENTS = CONFIG_DIR / "AGENTS.md"
 SETTINGS = CLI_DIR / "settings.json"
 STATE = CLI_DIR / ".agy-cli-tw-state.json"
-STATUSLINE = CLI_DIR / "statusline-tw.sh"
+STATUSLINE = CLI_DIR / "statusline-tw.py"
 SKILL_DIR = CLI_DIR / "skills" / "zh-tw"
 SKILL = SKILL_DIR / "SKILL.md"
 
@@ -29,7 +28,10 @@ SKILL = SKILL_DIR / "SKILL.md"
 def read_json(path: Path, default: dict) -> dict:
     if not path.exists() or not path.read_text(encoding="utf-8").strip():
         return default
-    value = json.loads(path.read_text(encoding="utf-8"))
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Invalid JSON in {path} at line {exc.lineno}, column {exc.colno}") from exc
     if not isinstance(value, dict):
         raise ValueError(f"{path} must contain a JSON object")
     return value
@@ -49,6 +51,32 @@ def atomic_write(path: Path, text: str, mode: int = 0o600) -> None:
             os.unlink(temp_name)
 
 
+def validate_sources() -> tuple[str, str, str]:
+    required = [
+        ROOT / "resources" / "AGENTS.zh-TW.md",
+        ROOT / "statusline-tw.py",
+        ROOT / "skills" / "zh-tw" / "SKILL.md",
+    ]
+    missing = [str(path) for path in required if not path.is_file()]
+    if missing:
+        raise FileNotFoundError("Required package file(s) are missing: " + ", ".join(missing))
+    agents_block = required[0].read_text(encoding="utf-8").strip()
+    statusline_source = required[1].read_text(encoding="utf-8")
+    skill_source = required[2].read_text(encoding="utf-8")
+    return agents_block, statusline_source, skill_source
+
+
+def preflight_writable_directories(create_missing: bool = True) -> None:
+    for directory in (CONFIG_DIR, CLI_DIR, SKILL_DIR):
+        if create_missing:
+            directory.mkdir(parents=True, exist_ok=True)
+        elif not directory.is_dir():
+            continue
+        fd, probe_name = tempfile.mkstemp(prefix=".agy-cli-tw-write-test-", dir=directory)
+        os.close(fd)
+        os.unlink(probe_name)
+
+
 def merge_agents(existing: str, block: str) -> str:
     start = existing.find(BEGIN)
     end = existing.find(END)
@@ -62,19 +90,17 @@ def merge_agents(existing: str, block: str) -> str:
 
 
 def install() -> None:
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    CLI_DIR.mkdir(parents=True, exist_ok=True)
-    SKILL_DIR.mkdir(parents=True, exist_ok=True)
-    agents_existed = AGENTS.exists()
-    old_agents = AGENTS.read_text(encoding="utf-8") if AGENTS.exists() else ""
-    block = (ROOT / "resources" / "AGENTS.zh-TW.md").read_text(encoding="utf-8").strip()
-    atomic_write(AGENTS, merge_agents(old_agents, block), 0o600)
-    shutil.copy2(ROOT / "statusline-tw.sh", STATUSLINE)
-    STATUSLINE.chmod(STATUSLINE.stat().st_mode | 0o111)
-    shutil.copy2(ROOT / "skills" / "zh-tw" / "SKILL.md", SKILL)
-
+    agents_block, statusline_source, skill_source = validate_sources()
     settings = read_json(SETTINGS, {})
     state = read_json(STATE, {})
+    preflight_writable_directories()
+
+    agents_existed = AGENTS.exists()
+    old_agents = AGENTS.read_text(encoding="utf-8") if AGENTS.exists() else ""
+    atomic_write(AGENTS, merge_agents(old_agents, agents_block), 0o644)
+    atomic_write(STATUSLINE, statusline_source, 0o644)
+    atomic_write(SKILL, skill_source, 0o644)
+
     current = settings.get("statusLine")
     command = "python3 " + shlex.quote(str(STATUSLINE))
     if not state:
@@ -85,7 +111,8 @@ def install() -> None:
             "originalStatusLine": current,
             "managedCommand": command,
         }
-    if current and current.get("command") != state.get("managedCommand") and STATE.exists():
+    managed_is_current = isinstance(current, dict) and current.get("command") == state.get("managedCommand")
+    if current is not None and not managed_is_current and STATE.exists():
         print("偵測到安裝後另行變更的 statusLine；保留目前設定。", file=sys.stderr)
     else:
         settings["statusLine"] = {"type": "command", "command": command}
@@ -99,6 +126,8 @@ def install() -> None:
 
 def uninstall() -> None:
     state = read_json(STATE, {})
+    settings = read_json(SETTINGS, {}) if SETTINGS.exists() else {}
+    preflight_writable_directories(create_missing=False)
     if AGENTS.exists():
         existing = AGENTS.read_text(encoding="utf-8")
         start, end = existing.find(BEGIN), existing.find(END)
@@ -111,9 +140,8 @@ def uninstall() -> None:
                 atomic_write(AGENTS, remaining, 0o600)
 
     if SETTINGS.exists() and state:
-        settings = read_json(SETTINGS, {})
         current = settings.get("statusLine")
-        if current and current.get("command") == state.get("managedCommand"):
+        if isinstance(current, dict) and current.get("command") == state.get("managedCommand"):
             settings.pop("statusLine", None)
             if state.get("originalStatusLinePresent"):
                 settings["statusLine"] = state.get("originalStatusLine")
@@ -134,4 +162,8 @@ def uninstall() -> None:
 if __name__ == "__main__":
     if len(sys.argv) != 2 or sys.argv[1] not in {"install", "uninstall"}:
         raise SystemExit("Usage: manage_unix.py install|uninstall")
-    (install if sys.argv[1] == "install" else uninstall)()
+    try:
+        (install if sys.argv[1] == "install" else uninstall)()
+    except (OSError, ValueError) as exc:
+        print(f"安裝作業失敗，未能完成：{exc}", file=sys.stderr)
+        raise SystemExit(1) from exc

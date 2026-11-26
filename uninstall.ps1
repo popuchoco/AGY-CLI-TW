@@ -12,12 +12,25 @@ $agentsPath = Join-Path $configDir 'AGENTS.md'
 $settingsPath = Join-Path $cliDir 'settings.json'
 $statePath = Join-Path $cliDir '.agy-cli-tw-state.json'
 $statuslinePath = Join-Path $cliDir 'statusline-tw.ps1'
-$skillDir = Join-Path $cliDir 'skills\zh-tw'
+$skillRoot = Join-Path $cliDir 'skills'
+$skillDir = Join-Path $skillRoot 'zh-tw'
 $skillPath = Join-Path $skillDir 'SKILL.md'
 
 $state = $null
 if (Test-Path -LiteralPath $statePath) {
-    $state = ConvertFrom-Json -InputObject ([IO.File]::ReadAllText($statePath))
+    try { $state = ConvertFrom-Json -InputObject ([IO.File]::ReadAllText($statePath)) -ErrorAction Stop }
+    catch { throw "JSON 格式錯誤：$statePath。$($_.Exception.Message)" }
+    if ($null -eq $state -or $state -is [Array] -or $state -is [string] -or $state -is [ValueType]) { throw "JSON 根節點必須是物件：$statePath" }
+}
+
+$settings = $null
+if (Test-Path -LiteralPath $settingsPath -PathType Leaf) {
+    $settingsText = [IO.File]::ReadAllText($settingsPath)
+    if ($settingsText.Trim()) {
+        try { $settings = ConvertFrom-Json -InputObject $settingsText -ErrorAction Stop }
+        catch { throw "JSON 格式錯誤：$settingsPath。$($_.Exception.Message)" }
+        if ($null -eq $settings -or $settings -is [Array] -or $settings -is [string] -or $settings -is [ValueType]) { throw "JSON 根節點必須是物件：$settingsPath" }
+    } else { $settings = [pscustomobject]@{} }
 }
 
 if (Test-Path -LiteralPath $agentsPath) {
@@ -35,9 +48,7 @@ if (Test-Path -LiteralPath $agentsPath) {
     }
 }
 
-if ((Test-Path -LiteralPath $settingsPath) -and $state) {
-    $settingsText = [IO.File]::ReadAllText($settingsPath)
-    $settings = if ($settingsText.Trim()) { ConvertFrom-Json -InputObject $settingsText } else { [pscustomobject]@{} }
+if ((Test-Path -LiteralPath $settingsPath -PathType Leaf) -and $state -and $settings) {
     $currentStatusLine = $settings.PSObject.Properties['statusLine']
     if ($null -ne $currentStatusLine -and [string]$currentStatusLine.Value.command -eq [string]$state.managedCommand) {
         $settings.PSObject.Properties.Remove('statusLine')

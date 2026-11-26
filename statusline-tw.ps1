@@ -15,6 +15,71 @@ function Get-Value($Object, [string]$Path, $Default) {
     return $value
 }
 
+function Get-CodePointDisplayWidth([int]$CodePoint) {
+    if (($CodePoint -ge 0x1100 -and $CodePoint -le 0x115F) -or
+        $CodePoint -eq 0x2329 -or $CodePoint -eq 0x232A -or
+        ($CodePoint -ge 0x2E80 -and $CodePoint -le 0xA4CF) -or
+        ($CodePoint -ge 0xAC00 -and $CodePoint -le 0xD7A3) -or
+        ($CodePoint -ge 0xF900 -and $CodePoint -le 0xFAFF) -or
+        ($CodePoint -ge 0xFE10 -and $CodePoint -le 0xFE19) -or
+        ($CodePoint -ge 0xFE30 -and $CodePoint -le 0xFE6F) -or
+        ($CodePoint -ge 0xFF00 -and $CodePoint -le 0xFF60) -or
+        ($CodePoint -ge 0xFFE0 -and $CodePoint -le 0xFFE6) -or
+        ($CodePoint -ge 0x1F300 -and $CodePoint -le 0x1FAFF) -or
+        ($CodePoint -ge 0x20000 -and $CodePoint -le 0x3FFFD)) { return 2 }
+    return 1
+}
+
+function Get-DisplayWidth([string]$Text) {
+    $cells = 0
+    for ($index = 0; $index -lt $Text.Length; $index++) {
+        $codePoint = [char]::ConvertToUtf32($Text, $index)
+        if ($codePoint -gt 0xFFFF) { $index++ }
+        $category = [Globalization.CharUnicodeInfo]::GetUnicodeCategory($Text, [Math]::Max(0, $index - $(if ($codePoint -gt 0xFFFF) { 1 } else { 0 })))
+        if ($category -in @([Globalization.UnicodeCategory]::NonSpacingMark, [Globalization.UnicodeCategory]::EnclosingMark, [Globalization.UnicodeCategory]::Format, [Globalization.UnicodeCategory]::Control)) { continue }
+        $cells += Get-CodePointDisplayWidth $codePoint
+    }
+    return $cells
+}
+
+function Limit-DisplayWidth([string]$Text, [int]$Limit) {
+    if ($Limit -le 0) { return '' }
+    if ((Get-DisplayWidth $Text) -le $Limit) { return $Text }
+    $suffix = '…'
+    $budget = [Math]::Max(0, $Limit - 1)
+    $cells = 0
+    $result = New-Object System.Text.StringBuilder
+    for ($index = 0; $index -lt $Text.Length; $index++) {
+        $codePoint = [char]::ConvertToUtf32($Text, $index)
+        if ($codePoint -gt 0xFFFF) { $index++ }
+        $categoryIndex = $index - $(if ($codePoint -gt 0xFFFF) { 1 } else { 0 })
+        $category = [Globalization.CharUnicodeInfo]::GetUnicodeCategory($Text, $categoryIndex)
+        $charWidth = if ($category -in @([Globalization.UnicodeCategory]::NonSpacingMark, [Globalization.UnicodeCategory]::EnclosingMark, [Globalization.UnicodeCategory]::Format, [Globalization.UnicodeCategory]::Control)) { 0 } else { Get-CodePointDisplayWidth $codePoint }
+        if ($cells + $charWidth -gt $budget) { break }
+        [void]$result.Append([char]::ConvertFromUtf32($codePoint))
+        $cells += $charWidth
+    }
+    return $result.ToString() + $suffix
+}
+
+function Format-StatusLines([string[]]$Fields, [int]$Width) {
+    $separator = '  │  '
+    $limit = [Math]::Max(1, $Width)
+    $lines = New-Object System.Collections.Generic.List[string]
+    $current = ''
+    foreach ($field in $Fields) {
+        if ([string]::IsNullOrEmpty($field)) { continue }
+        $field = Limit-DisplayWidth $field $limit
+        $candidate = if ($current) { $current + $separator + $field } else { $field }
+        if ($current -and (Get-DisplayWidth $candidate) -gt $limit) {
+            $lines.Add($current)
+            $current = $field
+        } else { $current = $candidate }
+    }
+    if ($current) { $lines.Add($current) }
+    foreach ($line in $lines) { [Console]::WriteLine($line) }
+}
+
 try {
     $raw = [Console]::In.ReadToEnd()
     $data = ConvertFrom-Json -InputObject $raw
@@ -42,10 +107,17 @@ $sandbox = [bool](Get-Value $data 'sandbox.enabled' $false)
 $sandboxText = if ($sandbox) { '開啟' } else { '關閉' }
 $artifacts = [int](Get-Value $data 'artifact_count' 0)
 $tasks = [int](Get-Value $data 'task_count' 0)
-$subagentsItems = @(Get-Value $data 'subagents' @())
-$subagents = $subagentsItems.Count
-$width = [int](Get-Value $data 'terminal_width' 100)
-try { if ([Console]::WindowWidth -gt 0) { $width = [Console]::WindowWidth } } catch {}
+$subagentsProperty = $data.PSObject.Properties['subagents']
+$subagentsValue = $null
+if ($null -ne $subagentsProperty) { $subagentsValue = $subagentsProperty.Value }
+$subagents = if ($subagentsValue -is [System.Collections.IList]) { $subagentsValue.Count } else { 0 }
+$widthValue = Get-Value $data 'terminal_width' $null
+if ($null -ne $widthValue) {
+    try { $width = [int]$widthValue } catch { $width = 100 }
+} else {
+    $width = 100
+    try { if ([Console]::WindowWidth -gt 0) { $width = [Console]::WindowWidth } } catch {}
+}
 
 $percentage = 0.0
 try { $percentage = [double](Get-Value $data 'context_window.used_percentage' 0) } catch {}
@@ -60,15 +132,5 @@ $usagePart = "上下文：$percentageText"
 $workPart = "代理：$subagents  工作：$tasks"
 $sandboxPart = "沙箱：$sandboxText"
 
-if ($width -ge 112) {
-    $parts = @($statePart, $modelPart, $branchPart, $usagePart, $workPart, "成品：$artifacts", $sandboxPart) | Where-Object { $_ }
-    [Console]::WriteLine(($parts -join '  │  '))
-} elseif ($width -ge 78) {
-    $line1 = @($statePart, $modelPart, $branchPart) | Where-Object { $_ }
-    $line2 = @($usagePart, $workPart, "成品：$artifacts", $sandboxPart) | Where-Object { $_ }
-    [Console]::WriteLine(($line1 -join '  │  '))
-    [Console]::WriteLine(($line2 -join '  │  '))
-} else {
-    [Console]::WriteLine("$statePart  │  $usagePart")
-    [Console]::WriteLine("代理：$subagents  工作：$tasks  │  沙箱：$sandboxText")
-}
+$fields = @($statePart, $modelPart, $branchPart, $usagePart, $workPart, "成品：$artifacts", $sandboxPart)
+Format-StatusLines $fields $width
