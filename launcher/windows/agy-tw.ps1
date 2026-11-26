@@ -72,6 +72,29 @@ public static class AgyPtyProxy
 
     static Exception Win32Error(string name) { return new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(), name); }
 
+    public static string ProbeConPty()
+    {
+        SafeFileHandle inputRead=null,inputWrite=null,outputRead=null,outputWrite=null;
+        IntPtr hpc=IntPtr.Zero;
+        try
+        {
+            if (!CreatePipe(out inputRead,out inputWrite,IntPtr.Zero,0)) return "CreatePipe(input): " + Win32Error("Create input pipe").Message;
+            if (!CreatePipe(out outputRead,out outputWrite,IntPtr.Zero,0)) return "CreatePipe(output): " + Win32Error("Create output pipe").Message;
+            int hr=CreatePseudoConsole(new COORD(80,24),inputRead,outputWrite,0,out hpc);
+            if (hr != 0) return "CreatePseudoConsole: " + new System.ComponentModel.Win32Exception(hr).Message;
+            return null;
+        }
+        catch (Exception e) { return e.Message; }
+        finally
+        {
+            if (hpc!=IntPtr.Zero) ClosePseudoConsole(hpc);
+            if (inputRead!=null) inputRead.Dispose();
+            if (inputWrite!=null) inputWrite.Dispose();
+            if (outputRead!=null) outputRead.Dispose();
+            if (outputWrite!=null) outputWrite.Dispose();
+        }
+    }
+
     static string Quote(string s)
     {
         if (s.Length == 0) return "\"\"";
@@ -464,4 +487,14 @@ if (-not (Test-Path -LiteralPath $AgyExe -PathType Leaf)) {
     exit 2
 }
 if ($null -eq ('AgyPtyProxy' -as [type])) { Add-Type -TypeDefinition $source -Language CSharp }
-exit [AgyPtyProxy]::Run($AgyExe, $AgyArgument)
+$conPtyError = [AgyPtyProxy]::ProbeConPty()
+if ($conPtyError) {
+    [Console]::Error.WriteLine("此環境無法建立 Windows ConPTY：$conPtyError。請改用途徑 A（官方設定增補包）。")
+    exit 3
+}
+try {
+    exit [AgyPtyProxy]::Run($AgyExe, $AgyArgument)
+} catch {
+    [Console]::Error.WriteLine("外部啟動器執行失敗：$($_.Exception.Message)")
+    exit 3
+}

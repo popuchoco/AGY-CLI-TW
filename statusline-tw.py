@@ -10,15 +10,17 @@ import unicodedata
 from typing import Any
 
 
+def char_display_width(char: str) -> int:
+    """Return terminal-cell width for one code point."""
+    category = unicodedata.category(char)
+    if unicodedata.combining(char) or category in {"Cc", "Cf", "Mn", "Me"}:
+        return 0
+    return 2 if unicodedata.east_asian_width(char) in {"F", "W"} else 1
+
+
 def display_width(text: str) -> int:
     """Return terminal-cell width (wide/fullwidth characters take two cells)."""
-    cells = 0
-    for char in text:
-        category = unicodedata.category(char)
-        if unicodedata.combining(char) or category in {"Cc", "Cf", "Mn", "Me"}:
-            continue
-        cells += 2 if unicodedata.east_asian_width(char) in {"F", "W"} else 1
-    return cells
+    return sum(char_display_width(char) for char in text)
 
 
 def clip_cells(text: str, limit: int) -> str:
@@ -29,9 +31,9 @@ def clip_cells(text: str, limit: int) -> str:
     result: list[str] = []
     used = 0
     ellipsis = "…"
-    budget = max(0, limit - display_width(ellipsis))
+    budget = max(0, limit - char_display_width(ellipsis))
     for char in text:
-        char_width = display_width(char)
+        char_width = char_display_width(char)
         if used + char_width > budget:
             break
         result.append(char)

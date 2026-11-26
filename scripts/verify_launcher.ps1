@@ -6,6 +6,8 @@ if (-not $match.Success) { throw 'Could not find the launcher C# source block.' 
 if ($null -eq ('AgyPtyProxy' -as [type])) {
     Add-Type -TypeDefinition $match.Groups[1].Value -Language CSharp
 }
+$conPtyIssue = [AgyPtyProxy]::ProbeConPty()
+if ($conPtyIssue) { Write-Host "INFO: ConPTY unavailable; launcher will direct users to path A. $conPtyIssue" }
 
 $cases = @(
     @('Add a directory to the workspace', '將目錄加入工作區'),
