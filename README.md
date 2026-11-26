@@ -22,6 +22,11 @@
 
 兩者可同時使用：先安裝 A，再以 B 啟動 CLI。直接輸入 `agy` 仍會使用原始 CLI，不會套用 B 的 TUI 轉譯。
 
+## 專案開發文件
+
+- [專案架構](docs/PROJECT-ARCHITECTURE.md)：模組責任、A/B 途徑資料流、安全邊界與相容性。
+- [SD（Software Development）開發流程](docs/SD-DEVELOPMENT-PROCESS.md)：需求、設計、實作、測試、隱私檢查與提交發布流程。
+
 ## 安裝
 
 ### Windows PowerShell
