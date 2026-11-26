@@ -3,6 +3,8 @@
 
 import json
 import os
+import shlex
+import shutil
 import stat
 import subprocess
 import sys
@@ -36,7 +38,7 @@ def display_width(text: str) -> int:
     )
 
 
-with tempfile.TemporaryDirectory(prefix="agy-cli-tw-unix-") as temp:
+with tempfile.TemporaryDirectory(prefix="agy cli tw unix-") as temp:
     home = Path(temp)
     gemini = home / ".gemini"
     config_dir = gemini / "config"
@@ -54,6 +56,7 @@ with tempfile.TemporaryDirectory(prefix="agy-cli-tw-unix-") as temp:
     assert installed["colorScheme"] == "dark"
     assert "statusline-tw.py" in installed["statusLine"]["command"]
     assert "python3 -c" not in installed["statusLine"]["command"]
+    configured_command = installed["statusLine"]["command"]
     assert agents.read_text(encoding="utf-8").count("<!-- BEGIN AGY-CLI-TW -->") == 1
     assert (cli_dir / "skills" / "zh-tw" / "SKILL.md").exists()
     if os.name != "nt":
@@ -73,14 +76,32 @@ with tempfile.TemporaryDirectory(prefix="agy-cli-tw-unix-") as temp:
     }
     status_env = os.environ.copy()
     status_env.pop("COLUMNS", None)
-    status_run = subprocess.run(
-        [sys.executable, str(cli_dir / "statusline-tw.py")],
-        input=json.dumps(payload),
-        capture_output=True,
-        text=True,
-        env=status_env,
-        check=True,
-    )
+    if os.name == "nt":
+        # The Unix settings command is POSIX shell syntax; execute its parsed
+        # argument vector with the current interpreter when exercising tests on
+        # Windows, where `python3` may be exposed under a different alias.
+        command_args = shlex.split(configured_command)
+        if command_args[0] == "python3" and not shutil.which("python3"):
+            command_args[0] = sys.executable
+        status_run = subprocess.run(
+            command_args,
+            input=json.dumps(payload),
+            capture_output=True,
+            text=True,
+            env=status_env,
+            check=True,
+        )
+    else:
+        # Exercise the exact command that Antigravity CLI will hand to its
+        # shell, including shlex quoting for installation paths with spaces.
+        status_run = subprocess.run(
+            ["/bin/sh", "-c", configured_command],
+            input=json.dumps(payload),
+            capture_output=True,
+            text=True,
+            env=status_env,
+            check=True,
+        )
     assert "思考中" in status_run.stdout and "Gemini 4 Hydrogen" in status_run.stdout
     assert "代理：0" in status_run.stdout
     assert all(display_width(line) <= payload["terminal_width"] for line in status_run.stdout.splitlines())
