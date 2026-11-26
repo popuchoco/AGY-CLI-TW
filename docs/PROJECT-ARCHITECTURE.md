@@ -1,6 +1,6 @@
 # 專案架構
 
-本文說明 AGY-CLI-TW 的模組、資料流、設定責任與安全邊界。專案提供兩條可分開使用的途徑：官方設定增補包（A）與 Windows 實驗性 ConPTY 啟動器（B）。
+本文說明 AGY-CLI-TW 的模組、資料流、設定責任與安全邊界。專案保留兩條使用途徑：官方設定增補包（A）與 Windows 實驗性 ConPTY 啟動器（B）。途徑 B 的政策適用性尚無針對此類 UI wrapper 的明確說明，詳見[產品規劃](PRODUCT-PLAN.md)。
 
 ## 系統概觀
 
@@ -38,7 +38,7 @@ flowchart LR
 
 ### B. Windows 外部啟動器（實驗性）
 
-途徑 B 使用 `launcher/windows/agy-tw.cmd` 作為入口，轉交給 `agy-tw.ps1`。啟動器解析原版 `agy.exe` 路徑，先探測 ConPTY 是否可建立，再透過 Windows Pseudo Console 啟動原執行檔。
+途徑 B 使用 `launcher/windows/agy-tw.cmd` 作為入口，轉交給 `agy-tw.ps1`。啟動器解析原版 `agy.exe` 路徑，先探測 ConPTY 是否可建立，再透過 Windows Pseudo Console 啟動原執行檔。它是互動式 UI wrapper，不使用 `agy -p`，也不會再呼叫 AI 代理；但 Google FAQ／服務條款對第三方軟體存取 Antigravity 有廣泛文字，目前沒有專門說明 ConPTY 在地化啟動器，因此文件不對其政策適用性作確定結論。
 
 ```mermaid
 sequenceDiagram
@@ -60,7 +60,7 @@ sequenceDiagram
 
 轉譯器保留 VT 控制序列，只處理已收錄的 UI 字串、頁籤標籤與 CLI 依寬度截短的說明。版本、帳號、路徑、模型、使用者內容、AI 回覆、工具輸出及錯誤訊息不做普遍翻譯。此途徑依 CLI 版本、字串分段和終端寬度而異；沒有公開的官方 UI locale 資源，因此不能視為完整語言包。
 
-ConPTY 不可用時，啟動器會顯示失敗原因並建議改用途徑 A。啟動器不修改、注入或重新簽署 `agy.exe`。
+ConPTY 不可用時，啟動器會顯示失敗原因並建議改用途徑 A。啟動器不修改、注入或重新簽署 `agy.exe`；這是技術邊界說明，不等同於 Google 對政策適用性的明確認可。
 
 ## 原始碼目錄
 
@@ -81,6 +81,6 @@ ConPTY 不可用時，啟動器會顯示失敗原因並建議改用途徑 A。�
 
 - 安裝器只管理本專案標記區塊、Skill、狀態列檔案及對應設定；使用者自訂值應保留。
 - 狀態列輸入視為不可信資料，需容忍 JSON 欄位缺漏、型別錯誤、未知狀態與超長欄位。
-- Windows 啟動器只接受使用者本機的 `agy.exe`，不下載執行檔、不連網、不改寫執行檔。
+- 途徑 B 只啟動互動式 `agy.exe`，不使用 `agy -p`，也不由 Codex 等外部 AI 代理編排；它仍是 wrapper，需將 Google 公開政策文字納入風險評估。
 - Windows TUI 轉譯需要 Windows 10 1809 以上的 ConPTY 與 Windows PowerShell；其他平台使用途徑 A。
 - 截圖、範例輸出、測試日誌與文件不得提交可識別帳號、信箱、個人路徑或其他私密資料；若敏感內容已進入 Git 歷史，單純新增遮蔽版並不足以移除舊物件。
